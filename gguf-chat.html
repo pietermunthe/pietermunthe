@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>GGUF Chat — wllama</title>
+<style>
+  :root{
+    --bg:#0f141a; --panel:#151b23; --panel2:#1b232d; --border:#26303b;
+    --text:#e8edf3; --muted:#8d9aa8; --accent:#7aa2ff; --danger:#ff6b6b; --ok:#4ade80;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #app{display:flex;height:100vh}
+
+  /* ── sidebar ── */
+  #sidebar{width:350px;min-width:350px;background:var(--panel);border-right:1px solid var(--border);
+           overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  #sidebar.hidden{margin-left:-350px}
+  .sec{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:12px}
+  .sec h3{margin:0 0 10px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  input[type=text],input[type=number],textarea,select{
+    width:100%;background:#0d1218;border:1px solid var(--border);border-radius:8px;
+    color:var(--text);padding:7px 9px;font:inherit;outline:none}
+  input:focus,textarea:focus,select:focus{border-color:var(--accent)}
+  textarea{resize:vertical}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  button{font:inherit;border:1px solid var(--border);background:#222b36;color:var(--text);
+         border-radius:8px;padding:8px 12px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#0b1220;font-weight:600}
+  button.danger{background:transparent;border-color:var(--danger);color:var(--danger)}
+  .hint{font-size:11px;color:var(--muted);margin-top:6px}
+  .files{font-size:11px;color:var(--ok);margin-top:4px;word-break:break-all}
+  #bar{height:6px;background:#0d1218;border-radius:99px;overflow:hidden;margin-top:10px;display:none}
+  #bar>div{height:100%;width:0;background:var(--accent);transition:width .2s}
+  #loadMsg{font-size:11px;color:var(--muted);margin-top:6px;min-height:15px}
+  details{border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-top:10px}
+  summary{cursor:pointer;font-size:12px;color:var(--muted)}
+  footer{font-size:11px;color:var(--muted);margin-top:auto;padding-top:10px;line-height:1.5}
+  code{background:#0d1218;border:1px solid var(--border);border-radius:4px;padding:0 4px;font-size:12px}
+
+  /* ── chat ── */
+  #main{flex:1;display:flex;flex-direction:column;min-width:0}
+  #topbar{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--panel)}
+  #burger{padding:6px 10px}
+  #statusDot{width:9px;height:9px;border-radius:99px;background:var(--danger);flex:none}
+  #statusDot.ok{background:var(--ok)} #statusDot.busy{background:#fbbf24}
+  #statusText{font-size:12px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #msgs{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px}
+  .msg{max-width:820px;width:100%;margin:0 auto}
+  .msg .who{font-size:11px;color:var(--muted);margin-bottom:4px}
+  .msg .body{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;white-space:pre-wrap;word-break:break-word}
+  .msg.user .body{background:#223047;border-color:#2e405c}
+  .msg pre{background:#0d1218;border:1px solid var(--border);border-radius:8px;padding:10px;overflow-x:auto;white-space:pre;margin:6px 0}
+  .msg code{font-family:ui-monospace,Consolas,monospace}
+  .msg img{max-width:220px;border-radius:8px;display:block;margin:6px 0;border:1px solid var(--border)}
+  .center{margin:auto;color:var(--muted);text-align:center;font-size:13px;line-height:1.8}
+  #composer{border-top:1px solid var(--border);padding:12px 16px;background:var(--panel)}
+  #composerInner{max-width:820px;margin:0 auto}
+  #imgPrev{display:none;position:relative;margin-bottom:8px}
+  #imgPrev img{height:64px;border-radius:8px;border:1px solid var(--border)}
+  #imgPrev button{position:absolute;top:-6px;left:70px;padding:2px 8px}
+  #inputRow{display:flex;gap:8px;align-items:flex-end}
+  #prompt{flex:1;min-height:44px;max-height:160px}
+  @media(max-width:760px){
+    #sidebar{position:fixed;z-index:10;height:100%;box-shadow:0 0 40px #000}
+    #sidebar.hidden{margin-left:-350px}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="sec">
+      <h3>Model</h3>
+      <label>Quick load</label>
+      <select id="quick">
+        <option value="">— pick a tested combo —</option>
+        <option value="qwen35-2b">Qwen3.5-2B Q4_K_M + vision (1.4 GB)</option>
+        <option value="smollm3">SmolLM3-3B Q4_K_M (1.9 GB)</option>
+        <option value="llama32-3b">Llama 3.2 3B Q4_K_S (~1.9 GB)</option>
+        <option value="dsr1-1.5b">DeepSeek-R1-Distill-Qwen-1.5B Q4_K_M (1.1 GB)</option>
+        <option value="gemma3-4b">Gemma 3 4B IQ3_XXS + vision (~2.7 GB total)</option>
+      </select>
+
+      <label>GGUF URL or HF path (one per line for split models)</label>
+      <textarea id="mdlUrls" rows="2" placeholder="unsloth/Qwen3.5-2B-GGUF/Qwen3.5-2B-Q4_K_M.gguf&#10;or full https://…/resolve/main/model.gguf"></textarea>
+
+      <label>mmproj (vision) — URL or HF path, or pick from disk</label>
+      <input type="text" id="mmprojUrl" placeholder="unsloth/Qwen3.5-2B-GGUF/mmproj-BF16.gguf"/>
+      <div class="row" style="margin-top:8px">
+        <button id="pickModel">Model from disk…</button>
+        <button id="pickMm">mmproj from disk…</button>
+      </div>
+      <div class="files" id="diskInfo"></div>
+      <input type="file" id="fModel" accept=".gguf" multiple hidden>
+      <input type="file" id="fMm" accept=".gguf" hidden>
+
+      <div class="grid3">
+        <div><label>Context</label><input type="number" id="ctxSize" value="4096" min="512" step="512"></div>
+        <div><label>Batch</label><input type="number" id="batchSize" value="512" min="32"></div>
+        <div><label>Threads (0=auto)</label><input type="number" id="nThreads" value="0" min="0"></div>
+      </div>
+      <div class="grid2">
+        <div><label>GPU layers (99=all)</label><input type="number" id="ngl" value="99" min="0"></div>
+        <div><label>&nbsp;</label><button id="ffCompat" style="width:100%">Firefox GPU compat</button></div>
+      </div>
+      <button class="primary" id="loadBtn" style="width:100%;margin-top:12px">Load model</button>
+      <button id="unloadBtn" style="width:100%;margin-top:6px" disabled>Unload</button>
+      <div id="bar"><div></div></div>
+      <div id="loadMsg"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Sampler</h3>
+      <label>Preset</label>
+      <select id="preset">
+        <option value="qwen35">Qwen3.5 / Qwen3 Instruct (official)</option>
+        <option value="qwen_think">Qwen3 Thinking (official)</option>
+        <option value="gemma3">Gemma 3 (Google official)</option>
+        <option value="llama3">Llama 3.x (Meta official)</option>
+        <option value="smollm3">SmolLM3</option>
+        <option value="dsr1">DeepSeek-R1-Distill</option>
+        <option value="hle">HLE benchmark (greedy, temp 0)</option>
+        <option value="custom">Custom</option>
+      </select>
+      <div class="grid3">
+        <div><label>Temperature</label><input type="number" id="temperature" value="0.7" step="0.05" min="0" max="2"></div>
+        <div><label>top_k (0=off)</label><input type="number" id="topK" value="20" min="0"></div>
+        <div><label>top_p</label><input type="number" id="topP" value="0.8" step="0.01" min="0" max="1"></div>
+        <div><label>min_p</label><input type="number" id="minP" value="0" step="0.01" min="0" max="1"></div>
+        <div><label>repeat_pen</label><input type="number" id="repeatPen" value="1.0" step="0.05" min="0.5" max="2"></div>
+        <div><label>presence_pen</label><input type="number" id="presPen" value="1.5" step="0.1" min="0" max="2"></div>
+        <div><label>freq_pen</label><input type="number" id="freqPen" value="0" step="0.1"></div>
+        <div><label>Max tokens</label><input type="number" id="maxTok" value="4096" min="16"></div>
+        <div><label>Seed (-1 rand)</label><input type="number" id="seed" value="-1"></div>
+      </div>
+      <details>
+        <summary>DRY anti-repeat &amp; advanced</summary>
+        <div class="grid2">
+          <div><label>DRY multiplier (0=off)</label><input type="number" id="dryM" value="0" step="0.1" min="0"></div>
+          <div><label>DRY base</label><input type="number" id="dryB" value="1.75" step="0.05"></div>
+          <div><label>DRY allowed len</label><input type="number" id="dryL" value="2" min="1"></div>
+          <div><label>DRY last n (-1=all)</label><input type="number" id="dryN" value="-1"></div>
+        </div>
+        <label>Stop sequences (comma-sep)</label>
+        <input type="text" id="stopSeq" placeholder="</s>, <end_of_turn>"/>
+      </details>
+      <label>System prompt</label>
+      <textarea id="sysPrompt" rows="3" placeholder="Optional. e.g. 'Answer with step-by-step reasoning, then Final Answer: …'"></textarea>
+      <label>Thinking mode (Qwen3/3.5 template)</label>
+      <select id="thinkMode">
+        <option value="">Model default</option>
+        <option value="true">Force ON (enable_thinking)</option>
+        <option value="false">Force OFF</option>
+      </select>
+    </div>
+
+    <footer>
+      <b>Notes</b><br>
+      • <code>org/repo/file.gguf</code> auto-converts to the HF download URL.<br>
+      • Files &gt; 2 GB must be pre-split; put shards one per line (order matters).<br>
+      • mmproj must be set <i>before</i> loading to enable vision.<br>
+      • Safari unsupported. If this page fails from <code>file://</code>, serve it:
+      <code>python -m http.server</code> → <code>http://localhost:8000/gguf-chat.html</code>
+    </footer>
+  </aside>
+
+  <main id="main">
+    <div id="topbar">
+      <button id="burger">☰</button>
+      <div id="statusDot"></div>
+      <div id="statusText">No model loaded</div>
+      <button id="clearBtn">Clear chat</button>
+    </div>
+    <div id="msgs">
+      <div class="center" id="welcome">
+        Load a GGUF in the sidebar (URL, HF path, or disk — mmproj optional).<br>
+        Sampler presets included for Gemma 3 / Qwen3.5 / Llama 3 / SmolLM3 / R1-Distill / HLE-greedy.<br>
+        Everything runs in this tab — no server, no keys.
+      </div>
+    </div>
+    <div id="composer">
+      <div id="composerInner">
+        <div id="imgPrev"><img id="imgThumb" alt=""/><button id="imgDel">✕</button></div>
+        <div id="inputRow">
+          <button id="attachBtn" title="Attach image (needs mmproj)" disabled>🖼</button>
+          <textarea id="prompt" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
+          <button class="primary" id="sendBtn" disabled>Send</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<input type="file" id="fImg" accept="image/*" hidden>
+
+<script type="module">
+import { Wllama } from 'https://cdn.jsdelivr.net/npm/@wllama/wllama@3.8.1/esm/index.js';
+
+const V = '3.8.1';
+const CDN = `https://cdn.jsdelivr.net/npm/@wllama/wllama@${V}/src`;
+const CONFIG_PATHS = {
+  'single-thread/wllama.wasm': `${CDN}/single-thread/wllama.wasm`,
+  'multi-thread/wllama.wasm':  `${CDN}/multi-thread/wllama.wasm`,
+};
+let wllama = null;
+
+/* ── state ── */
+const S = { history: [], image: null, hasVision: false, generating: false, abort: null, mt: '?' };
+
+/* ── helpers ── */
+const $ = id => document.getElementById(id);
+const num = id => parseFloat($(id).value); 
+const esc = t => String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function md(t){
+  const parts = String(t).split(/```/); let out='';
+  for (let i=0;i<parts.length;i++){
+    if (i%2) out += `<pre>${esc(parts[i].replace(/^\w*\n/,''))}</pre>`;
+    else out += esc(parts[i])
+      .replace(/`([^`\n]+)`/g,'<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+      .replace(/\n/g,'<br>');
+  }
+  return out;
+}
+function toUrl(s){
+  s = (s||'').trim(); if(!s) return null;
+  if (/^https?:\/\//.test(s)) return s;
+  const m = s.match(/^([\w.-]+)\/([\w.-]+)\/(.+)$/);
+  return m ? `https://huggingface.co/${m[1]}/${m[2]}/resolve/main/${m[3]}` : s;
+}
+function setStatus(text, cls){ $('statusText').textContent=text; $('statusDot').className=cls||''; }
+function loadMsg(t){ $('loadMsg').textContent = t; }
+function setProgress(f){ const b=$('bar'); b.style.display=f==null?'none':'block';
+  $('bar').firstElementChild.style.width = Math.round(Math.min(1,Math.max(0,f))*100)+'%'; }
+
+/* ── persistence ── */
+const IDS = ['mdlUrls','mmprojUrl','ctxSize','batchSize','nThreads','ngl','preset','temperature',
+  'topK','topP','minP','repeatPen','presPen','freqPen','maxTok','seed','dryM','dryB','dryL','dryN',
+  'stopSeq','sysPrompt','thinkMode'];
+function save(){ try{ const o={}; IDS.forEach(id=>o[id]=$(id).value);
+  localStorage.setItem('ggufchat.v1', JSON.stringify(o)); }catch{} }
+function restore(){ try{ const o=JSON.parse(localStorage.getItem('ggufchat.v1')||'{}');
+  IDS.forEach(id=>{ if(o[id]!=null) $(id).value=o[id]; }); }catch{} }
+restore();
+
+/* ── presets ── */
+const PRESETS = {
+  qwen35:    { temperature:.7,  topK:20, topP:.8,  minP:0,  repeatPen:1,   presPen:1.5, freqPen:0, maxTok:4096 },
+  qwen_think:{ temperature:.6,  topK:20, topP:.95, minP:0,  repeatPen:1,   presPen:0,   freqPen:0, maxTok:8192 },
+  gemma3:    { temperature:1.0, topK:64, topP:.95, minP:0,  repeatPen:1,   presPen:0,   freqPen:0, maxTok:1024 },
+  llama3:    { temperature:.6,  topK:40, topP:.9,  minP:0,  repeatPen:1.1, presPen:0,   freqPen:0, maxTok:2048 },
+  smollm3:   { temperature:.6,  topK:40, topP:.95, minP:0,  repeatPen:1,   presPen:0,   freqPen:0, maxTok:4096 },
+  dsr1:      { temperature:.6,  topK:40, topP:.95, minP:0,  repeatPen:1,   presPen:0,   freqPen:0, maxTok:8192 },
+  hle:       { temperature:0,   topK:0,  topP:1,   minP:0,  repeatPen:1,   presPen:0,   freqPen:0, maxTok:4096 },
+};
+ $('preset').onchange = () => {
+  const p = PRESETS[$('preset').value]; if(!p) return;
+  Object.keys(p).forEach(k => $(k).value = p[k]); save();
+};
+
+/* ── quick loads ── */
+const QUICK = {
+  'qwen35-2b': { m:'unsloth/Qwen3.5-2B-GGUF/Qwen3.5-2B-Q4_K_M.gguf',
+                 mm:'unsloth/Qwen3.5-2B-GGUF/mmproj-BF16.gguf', preset:'qwen35', ctx:8192 },
+  'smollm3':   { m:'bartowski/HuggingFaceTB_SmolLM3-3B-GGUF/SmolLM3-3B-Q4_K_M.gguf', preset:'smollm3', ctx:8192 },
+  'llama32-3b':{ m:'bartowski/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q4_K_S.gguf', preset:'llama3', ctx:8192 },
+  'dsr1-1.5b': { m:'bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf', preset:'dsr1', ctx:8192 },
+  'gemma3-4b': { m:'bartowski/google_gemma-3-4b-it-GGUF/google_gemma-3-4b-it-IQ3_XXS.gguf',
+                 mm:'bartowski/google_gemma-3-4b-it-GGUF/mmproj-google_gemma-3-4b-it-f16.gguf', preset:'gemma3', ctx:4096 },
+};
+ $('quick').onchange = () => {
+  const q = QUICK[$('quick').value]; if(!q) return;
+  $('mdlUrls').value = q.m; $('mmprojUrl').value = q.mm || '';
+  $('ctxSize').value = q.ctx; $('preset').value = q.preset;
+  $('preset').onchange(); save();
+};
+
+/* ── disk pickers ── */
+let diskModel = null, diskMm = null;
+ $('pickModel').onclick = () => $('fModel').click();
+ $('pickMm').onclick    = () => $('fMm').click();
+ $('fModel').onchange = async e => { diskModel = [...e.target.files].sort((a,b)=>a.name<b.name?-1:1);
+  updateDiskInfo(); };
+ $('fMm').onchange = async e => { diskMm = e.target.files[0]; updateDiskInfo(); };
+function updateDiskInfo(){
+  const a = diskModel ? `model: ${diskModel.map(f=>f.name).join(', ')} (${(diskModel.reduce((s,f)=>s+f.size,0)/1e9).toFixed(2)} GB)` : '';
+  const b = diskMm ? ` | mmproj: ${diskMm.name}` : '';
+  $('diskInfo').textContent = a + b;
+}
+
+/* ── load / unload ── */
+async function blobUrl(file){ return URL.createObjectURL(file); }
+
+ $('loadBtn').onclick = async () => {
+  try {
+    $('loadBtn').disabled = true; loadMsg('Loading…'); setProgress(0);
+    if (wllama) { try { await wllama.exit(); } catch {} }
+
+    let urls, mmproj;
+    if (diskModel && diskModel.length) {
+      urls = await Promise.all(diskModel.map(blobUrl));
+    } else {
+      urls = $('mdlUrls').value.split('\n').map(toUrl).filter(Boolean);
+    }
+    if (!urls.length) { throw new Error('Pick a model: URL / HF path, or a file from disk.'); }
+    if (urls.some(u => !/^https?:|^blob:/.test(u))) throw new Error('Invalid model URL.');
+    if (urls.some(u => /^https?:/.test(u) && !u.startsWith('blob:'))) { /* size unknown; wllama will enforce */ }
+
+    if (diskMm) mmproj = await blobUrl(diskMm);
+    else mmproj = toUrl($('mmprojUrl').value);
+
+    wllama = new Wllama(CONFIG_PATHS);
+    try { if ($('ngl').value === 'ff') wllama.setCompat('default','firefox_safari'); } catch {}
+
+    const opts = {
+      n_ctx: Math.max(512, num('ctxSize')|0),
+      n_batch: Math.max(32, num('batchSize')|0),
+      progressCallback: (p) => {
+        let f = (p && typeof p==='object') ? (p.total ? p.loaded/p.total : 0) : (p ?? 0);
+        if (f > 1) f = f/100; setProgress(f);
+        loadMsg(`Downloading model… ${Math.round(f*100)}%`);
+      },
+    };
+    if ((num('nThreads')|0) > 0) opts.n_threads = num('nThreads')|0;
+    if (mmproj) { opts.mmproj = mmproj; try { opts.mmprojUrl = mmproj; } catch {} }
+
+    await wllama.loadModelFromUrl(urls, opts);
+
+    S.hasVision = !!mmproj;
+    S.mt = (()=>{ try { return wllama.isMultithread() ? 'multi-thread' : 'single-thread'; } catch { return '?'; } })();
+    let meta = '';
+    try { const m = await wllama.getModelMetadata(); meta = m?.['general.name'] || ''; } catch {}
+    setStatus(`${meta || 'model'} loaded · ${S.mt}${S.hasVision?' · vision':''}`, 'ok');
+    loadMsg('Model loaded.'); setProgress(null);
+    $('sendBtn').disabled = false; $('unloadBtn').disabled = false;
+    $('attachBtn').disabled = !S.hasVision;
+    $('attachBtn').title = S.hasVision ? 'Attach image' : 'Attach image (needs mmproj at load time)';
+  } catch (err) {
+    console.error(err);
+    loadMsg(''); setProgress(null);
+    setStatus('Load failed', '');
+    alert('Load failed: ' + (err?.message || err) +
+      '\n\nHints:\n• Files > 2 GB must be split into shards (one URL per line)\n• From file://, if loading hangs, serve the page: python -m http.server\n• Safari is not supported — use Chrome/Edge/Firefox');
+  } finally { $('loadBtn').disabled = false; }
+};
+
+ $('unloadBtn').onclick = async () => {
+  try { await wllama.exit(); } catch {}
+  wllama = null; S.hasVision = false;
+  setStatus('No model loaded',''); loadMsg('Unloaded.');
+  $('sendBtn').disabled = true; $('unloadBtn').disabled = true; $('attachBtn').disabled = true;
+};
+
+/* ── chat ── */
+const msgsEl = $('msgs');
+function addMsg(role, html){
+  const d = document.createElement('div'); d.className = 'msg '+role;
+  d.innerHTML = `<div class="who">${role==='user'?'You':'Assistant'}</div><div class="body">${html}</div>`;
+  msgsEl.appendChild(d); msgsEl.scrollTop = msgsEl.scrollHeight;
+  return d.querySelector('.body');
+}
+ $('clearBtn').onclick = () => {
+  S.history = []; S.image = null; $('imgPrev').style.display='none';
+  msgsEl.innerHTML = '<div class="center">Chat cleared. History is fresh.</div>';
+};
+
+ $('attachBtn').onclick = () => $('fImg').click();
+ $('fImg').onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = () => { S.image = r.result; $('imgThumb').src = S.image; $('imgPrev').style.display='block'; };
+  r.readAsDataURL(f); e.target.value='';
+};
+ $('imgDel').onclick = () => { S.image = null; $('imgPrev').style.display='none'; };
+
+function buildMessages(userContent){
+  const m = [];
+  const sys = $('sysPrompt').value.trim();
+  if (sys) m.push({ role:'system', content: sys });
+  m.push(...S.history);
+  m.push({ role:'user', content: userContent });
+  return m;
+}
+function samplerOpts(){
+  const o = {
+    max_tokens: Math.max(16, num('maxTok')|0),
+    temperature: num('temperature'),
+    top_k: num('topK')|0,
+    top_p: num('topP'),
+    min_p: num('minP'),
+    repeat_penalty: num('repeatPen'),
+    presence_penalty: num('presPen'),
+    frequency_penalty: num('freqPen'),
+    dry_multiplier: num('dryM'),
+    dry_base: num('dryB'),
+    dry_allowed_length: num('dryL')|0,
+    dry_penalty_last_n: num('dryN')|0,
+    stream: true,
+    cache_prompt: true,
+  };
+  const s = num('seed'); if (s >= 0) o.seed = s|0;
+  const st = $('stopSeq').value.split(',').map(x=>x.trim()).filter(Boolean); if (st.length) o.stop = st;
+  const t = $('thinkMode').value; if (t !== '') o.chat_template_kwargs = { enable_thinking: t==='true' };
+  return o;
+}
+const deltaOf = c => c?.choices?.[0]?.delta?.content ?? c?.delta?.content ?? c?.content ?? '';
+
+ $('sendBtn').onclick = async () => {
+  if (!wllama || S.generating) return;
+  const text = $('prompt').value.trim();
+  if (!text && !S.image) return;
+
+  let content = text || 'Describe the image.';
+  let userHtml = md(text);
+  if (S.image){
+    userHtml = `<img src="${S.image}">` + userHtml;
+    content = [
+      { type:'text', text: text || 'Describe the image.' },
+      { type:'image_url', image_url:{ url: S.image } },
+    ];
+    S.image = null; $('imgPrev').style.display='none';
+  }
+
+  S.history.push({ role:'user', content });
+  $('welcome')?.remove();
+  addMsg('user', userHtml);
+  $('prompt').value = '';
+
+  const body = addMsg('assistant','<span style="color:var(--muted)">…</span>');
+  S.generating = true; setStatus('Generating…','busy');
+  $('sendBtn').textContent = 'Stop'; $('sendBtn').classList.add('danger');
+  const ctrl = new AbortController(); S.abort = ctrl;
+
+  try {
+    const result = await wllama.createChatCompletion({
+      messages: buildMessages(S.history[S.history.length-1].content),
+      abortSignal: ctrl.signal,
+      ...samplerOpts(),
+    });
+    let acc = '';
+    if (result && typeof result[Symbol.asyncIterator] === 'function'){
+      for await (const chunk of result){ acc += deltaOf(chunk); body.innerHTML = md(acc);
+        msgsEl.scrollTop = msgsEl.scrollHeight; }
+    } else { acc = String(result ?? ''); body.innerHTML = md(acc); }
+    S.history.push({ role:'assistant', content: acc });
+    if (!acc.trim()) body.innerHTML = '<span style="color:var(--muted)">(empty response)</span>';
+  } catch (err) {
+    if (ctrl.signal.aborted) body.innerHTML += '<span style="color:var(--muted)"><br>[stopped]</span>';
+    else { body.innerHTML = md('⚠️ ' + (err?.message || err));
+           S.history.push({ role:'assistant', content:'(error)' }); }
+  } finally {
+    S.generating = false; S.abort = null;
+    $('sendBtn').textContent = 'Send'; $('sendBtn').classList.remove('danger');
+    setStatus('Ready · ' + (wllama ? '' : 'no model'), wllama?'ok':'');
+  }
+};
+
+ $('prompt').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); $('sendBtn').click(); }
+});
+ $('burger').onclick = () => $('sidebar').classList.toggle('hidden');
+ $('ffCompat').onclick = () => { $('ngl').value='ff'; $('ffCompat').textContent='Compat ON (reload model)'; };
+ $('app').addEventListener('change', save);
+</script>
+</body>
+</html>
